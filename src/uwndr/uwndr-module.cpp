@@ -54,6 +54,7 @@ UwNdrModule::UwNdrModule()
 	, errors_sent_(0)
 	, data_forwarded_(0)
 	, data_dropped_buf_(0)
+	, data_dropped_dup_(0)
 	, routes_expired_(0)
 	, expire_timer_(this)
 {
@@ -104,6 +105,9 @@ UwNdrModule::command(int argc, const char *const *argv)
 			return TCL_OK;
 		} else if (strcasecmp(argv[1], "getdataforwarded") == 0) {
 			tcl.resultf("%lu", data_forwarded_);
+			return TCL_OK;
+		} else if (strcasecmp(argv[1], "getdatadroppeddup") == 0) {
+			tcl.resultf("%lu", data_dropped_dup_);
 			return TCL_OK;
 		} else if (strcasecmp(argv[1], "getrouteexpirycount") == 0) {
 			tcl.resultf("%lu", routes_expired_);
