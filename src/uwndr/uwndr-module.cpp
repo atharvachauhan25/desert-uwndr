@@ -45,6 +45,7 @@ UwNdrModule::UwNdrModule()
 	, route_lifetime_(60.0)
 	, max_buffer_pkts_(20)
 	, verbose_(1)
+	, refresh_on_tx_(0)
 	, seq_num_(0)
 	, probes_sent_(0)
 	, probes_forwarded_(0)
@@ -61,6 +62,7 @@ UwNdrModule::UwNdrModule()
 	bind("route_lifetime_", &route_lifetime_);
 	bind("max_buffer_pkts_", &max_buffer_pkts_);
 	bind("verbose_", &verbose_);
+	bind("refresh_on_tx_", &refresh_on_tx_);
 }
 
 UwNdrModule::~UwNdrModule()
@@ -146,9 +148,16 @@ UwNdrModule::recv(Packet *p)
 		if (iph->daddr() == ipAddr_ || iph->daddr() == UWIP_BROADCAST) {
 			// Passive reverse route refresh from incoming data traffic
 			if (ch->prev_hop_ != 0 && iph->saddr() != 0 && iph->saddr() != ipAddr_) {
+				uint8_t prev_hop = static_cast<uint8_t>(ch->prev_hop_);
 				UwNdrRoutingEntry existing;
-				if (!getValidRoute(iph->saddr(), existing)) {
-					updateRoute(iph->saddr(), ch->prev_hop_, 1, 0);
+				if (getValidRoute(iph->saddr(), existing)) {
+					if (existing.next_hop == prev_hop) {
+						// Confirmed active link: refresh reverse route lease
+						routing_table_[iph->saddr()].last_updated = NOW;
+						routing_table_[iph->saddr()].expire_time = NOW + route_lifetime_;
+					}
+				} else {
+					updateRoute(iph->saddr(), prev_hop, 1, 0);
 				}
 			}
 			sendUp(p);
@@ -156,6 +165,19 @@ UwNdrModule::recv(Packet *p)
 		}
 
 		// Data packet meant for another node -> forward along dynamic route
+		if (ch->prev_hop_ != 0 && iph->saddr() != 0 && iph->saddr() != ipAddr_) {
+			uint8_t prev_hop = static_cast<uint8_t>(ch->prev_hop_);
+			UwNdrRoutingEntry rev_entry;
+			if (getValidRoute(iph->saddr(), rev_entry)) {
+				if (rev_entry.next_hop == prev_hop) {
+					routing_table_[iph->saddr()].last_updated = NOW;
+					routing_table_[iph->saddr()].expire_time = NOW + route_lifetime_;
+				}
+			} else {
+				updateRoute(iph->saddr(), prev_hop, 1, 0);
+			}
+		}
+
 		UwNdrRoutingEntry entry;
 		if (getValidRoute(iph->daddr(), entry, true)) {
 			if (verbose_) {
@@ -194,7 +216,13 @@ UwNdrModule::recv(Packet *p)
 	}
 
 	UwNdrRoutingEntry entry;
-	if (getValidRoute(iph->daddr(), entry, true)) {
+	// Task A1.1: Fix originator lease refresh. Decouple relay confirmation
+	// from outbound transmissions under unacknowledged MAC (setNoAckMode).
+	// An originator must not artificially prolong its own route lease simply
+	// by transmitting data; the lease must be bounded by route_lifetime_
+	// unless explicitly confirmed or refresh_on_tx_ is explicitly requested.
+	bool refresh_lease = (refresh_on_tx_ != 0);
+	if (getValidRoute(iph->daddr(), entry, refresh_lease)) {
 		ch->prev_hop_ = ipAddr_;
 		ch->next_hop() = entry.next_hop;
 		sendDown(p);

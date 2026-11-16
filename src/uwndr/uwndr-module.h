@@ -85,6 +85,7 @@ private:
 	double route_lifetime_;
 	int max_buffer_pkts_;
 	int verbose_;
+	int refresh_on_tx_;   /**< If 0 (default), outbound transmissions do not prolong lease (prevents blackholes under setNoAckMode). */
 
 	uint32_t seq_num_;
 
