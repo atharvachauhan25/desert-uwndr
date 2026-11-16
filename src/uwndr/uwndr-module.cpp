@@ -538,6 +538,20 @@ UwNdrModule::handleError(Packet *p)
 	}
 
 	if (ipAddr_ == orig_src || orig_src == 0) {
+		// Task A1.2: If this node is the originator and has buffered packets waiting for broken_dst,
+		// trigger an immediate route probe to rediscover/repair the route via an alternative relay!
+		auto q_it = pending_queues_.find(broken_dst);
+		if (q_it != pending_queues_.end() && !q_it->second.empty()) {
+			auto pr_it = last_probe_sent_.find(broken_dst);
+			if (pr_it == last_probe_sent_.end() || (NOW - pr_it->second) >= 1.0) {
+				if (verbose_) {
+					std::cout << "[" << NOW << "s] [UWNDR] Node " << (int) ipAddr_
+							  << " triggering IMMEDIATE RE-PROBE for Node " << (int) broken_dst
+							  << " after RERR (buffered pkts=" << q_it->second.size() << ")" << std::endl;
+				}
+				sendRouteProbe(broken_dst);
+			}
+		}
 		Packet::free(p);
 		return;
 	}
