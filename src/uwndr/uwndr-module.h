@@ -15,6 +15,7 @@
 
 #define DROP_UWNDR_BUF_FULL "UBF"
 #define DROP_UWNDR_NO_ROUTE "UNR"
+#define DROP_UWNDR_DUP      "UDP"
 
 class UwNdrModule;
 
@@ -85,6 +86,7 @@ private:
 	double route_lifetime_;
 	int max_buffer_pkts_;
 	int verbose_;
+	int refresh_on_tx_;   /**< If 0 (default), outbound transmissions do not prolong lease (prevents blackholes under setNoAckMode). */
 
 	uint32_t seq_num_;
 
@@ -96,12 +98,14 @@ private:
 	unsigned long errors_sent_;
 	unsigned long data_forwarded_;
 	unsigned long data_dropped_buf_;
+	unsigned long data_dropped_dup_;
 	unsigned long routes_expired_;
 
 	std::map<uint8_t, UwNdrRoutingEntry> routing_table_;
 	std::map<uint8_t, std::queue<Packet *> > pending_queues_;
 	std::map<uint8_t, double> last_probe_sent_;
 	std::map<uint8_t, std::map<uint32_t, double> > seen_probes_;
+	std::map<uint8_t, std::map<int, double> > seen_data_pkts_; /**< Dedup cache for MAC-level duplicate data retries. */
 
 	UwNdrExpireTimer expire_timer_;
 };
