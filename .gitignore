@@ -1,0 +1,40 @@
+# Build artifacts & compiled binaries
+*.o
+*.so
+*.la
+*.lo
+*.a
+.libs/
+.deps/
+InitTcl.cc
+
+# Private documentation & planners
+docs/
+*.pdf
+
+# ROS bags & large archives
+*.bag
+*.tar.gz
+*.zip
+*.mp4
+
+# Simulation logs & temporary traces
+*.tr
+*.cltr
+*.nam
+*.log
+
+# LaTeX intermediate files
+*.aux
+*.out
+*.synctex.gz
+*.toc
+*.fls
+*.fdb_latexmk
+
+# OS & Python cache
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.vscode/

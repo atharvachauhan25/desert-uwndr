@@ -1,0 +1,5 @@
+mode,duration_s,sent,recv,pdr_pct,mean_ftt_s,goodput_bps,data_fwd,ctrl_pkts,mac_tx_total
+static_broken,600,29,0,0.00,0.0000,0.00,0,0,29
+static_oracle,600,29,29,100.00,3.5924,47.78,58,0,87
+flooding,600,29,28,96.55,3.8009,46.50,87,0,116
+uwndr,600,29,28,96.55,4.6080,48.30,57,11,97
