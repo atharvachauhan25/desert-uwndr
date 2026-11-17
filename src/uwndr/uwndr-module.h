@@ -81,6 +81,10 @@ protected:
 	void purgeStalePackets();
 	void printRoutingTable() const;
 
+	double getOverheadRatio() const;
+	unsigned long getTotalCtrlBytes() const { return total_ctrl_bytes_; }
+	unsigned long getTotalDataBytes() const { return total_data_bytes_; }
+
 private:
 	uint8_t ipAddr_;
 	int max_hop_count_;
@@ -104,6 +108,8 @@ private:
 	unsigned long data_dropped_timeout_;
 	unsigned long data_dropped_dup_;
 	unsigned long routes_expired_;
+	unsigned long total_ctrl_bytes_;
+	unsigned long total_data_bytes_;
 
 	std::map<uint8_t, UwNdrRoutingEntry> routing_table_;
 	std::map<uint8_t, std::queue<Packet *> > pending_queues_;
