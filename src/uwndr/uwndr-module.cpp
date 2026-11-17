@@ -35,6 +35,7 @@ void
 UwNdrExpireTimer::expire(Event *)
 {
 	module_->purgeExpiredRoutes();
+	module_->purgeStalePackets();
 	resched(5.0);
 }
 
@@ -44,6 +45,7 @@ UwNdrModule::UwNdrModule()
 	, probe_timeout_(15.0)
 	, route_lifetime_(60.0)
 	, max_buffer_pkts_(20)
+	, max_buffer_time_(30.0)
 	, verbose_(1)
 	, refresh_on_tx_(0)
 	, seq_num_(0)
@@ -54,14 +56,18 @@ UwNdrModule::UwNdrModule()
 	, errors_sent_(0)
 	, data_forwarded_(0)
 	, data_dropped_buf_(0)
+	, data_dropped_timeout_(0)
 	, data_dropped_dup_(0)
 	, routes_expired_(0)
+	, total_ctrl_bytes_(0)
+	, total_data_bytes_(0)
 	, expire_timer_(this)
 {
 	bind("max_hop_count_", &max_hop_count_);
 	bind("probe_timeout_", &probe_timeout_);
 	bind("route_lifetime_", &route_lifetime_);
 	bind("max_buffer_pkts_", &max_buffer_pkts_);
+	bind("max_buffer_time_", &max_buffer_time_);
 	bind("verbose_", &verbose_);
 	bind("refresh_on_tx_", &refresh_on_tx_);
 }
@@ -106,8 +112,23 @@ UwNdrModule::command(int argc, const char *const *argv)
 		} else if (strcasecmp(argv[1], "getdataforwarded") == 0) {
 			tcl.resultf("%lu", data_forwarded_);
 			return TCL_OK;
+		} else if (strcasecmp(argv[1], "getdatadroppedbuf") == 0) {
+			tcl.resultf("%lu", data_dropped_buf_);
+			return TCL_OK;
+		} else if (strcasecmp(argv[1], "getdatadroppedtimeout") == 0) {
+			tcl.resultf("%lu", data_dropped_timeout_);
+			return TCL_OK;
 		} else if (strcasecmp(argv[1], "getdatadroppeddup") == 0) {
 			tcl.resultf("%lu", data_dropped_dup_);
+			return TCL_OK;
+		} else if (strcasecmp(argv[1], "getctrlbytes") == 0) {
+			tcl.resultf("%lu", total_ctrl_bytes_);
+			return TCL_OK;
+		} else if (strcasecmp(argv[1], "getdatabytes") == 0) {
+			tcl.resultf("%lu", total_data_bytes_);
+			return TCL_OK;
+		} else if (strcasecmp(argv[1], "getoverheadratio") == 0) {
+			tcl.resultf("%.4f", getOverheadRatio());
 			return TCL_OK;
 		} else if (strcasecmp(argv[1], "getrouteexpirycount") == 0) {
 			tcl.resultf("%lu", routes_expired_);
@@ -148,6 +169,25 @@ UwNdrModule::recv(Packet *p)
 			return;
 		}
 
+		// Task A1.3: MAC retry packet deduplication cache
+		int uid = ch->uid();
+		uint8_t src = static_cast<uint8_t>(iph->saddr());
+		if (src != 0 && src != ipAddr_) {
+			auto &src_cache = seen_data_pkts_[src];
+			auto d_it = src_cache.find(uid);
+			if (d_it != src_cache.end() && (NOW - d_it->second) < 30.0) {
+				if (verbose_) {
+					std::cout << "[" << NOW << "s] [UWNDR] Node " << (int) ipAddr_
+							  << " dropped DUPLICATE DATA (uid=" << uid
+							  << " from Node " << (int) src << ")" << std::endl;
+				}
+				data_dropped_dup_++;
+				drop(p, 1, DROP_UWNDR_DUP);
+				return;
+			}
+			src_cache[uid] = NOW;
+		}
+
 		// Standard data packet arriving from lower layer
 		if (iph->daddr() == ipAddr_ || iph->daddr() == UWIP_BROADCAST) {
 			// Passive reverse route refresh from incoming data traffic
@@ -164,6 +204,7 @@ UwNdrModule::recv(Packet *p)
 					updateRoute(iph->saddr(), prev_hop, 1, 0);
 				}
 			}
+			total_data_bytes_ += ch->size();
 			sendUp(p);
 			return;
 		}
@@ -194,6 +235,7 @@ UwNdrModule::recv(Packet *p)
 			ch->prev_hop_ = ipAddr_;
 			ch->next_hop() = entry.next_hop;
 			data_forwarded_++;
+			total_data_bytes_ += ch->size();
 			sendDown(p);
 		} else {
 			if (verbose_) {
@@ -215,6 +257,7 @@ UwNdrModule::recv(Packet *p)
 	if (iph->daddr() == UWIP_BROADCAST) {
 		ch->prev_hop_ = ipAddr_;
 		ch->next_hop() = UWIP_BROADCAST;
+		total_data_bytes_ += ch->size();
 		sendDown(p);
 		return;
 	}
@@ -229,6 +272,7 @@ UwNdrModule::recv(Packet *p)
 	if (getValidRoute(iph->daddr(), entry, refresh_lease)) {
 		ch->prev_hop_ = ipAddr_;
 		ch->next_hop() = entry.next_hop;
+		total_data_bytes_ += ch->size();
 		sendDown(p);
 	} else {
 		// Buffer outbound data packet and trigger on-demand route discovery
@@ -276,6 +320,7 @@ UwNdrModule::sendRouteProbe(uint8_t target_dst)
 	seen_probes_[ipAddr_][seq_num_] = NOW;
 	last_probe_sent_[target_dst] = NOW;
 	probes_sent_++;
+	total_ctrl_bytes_ += sizeof(hdr_uwndr);
 
 	if (verbose_) {
 		std::cout << "[" << NOW << "s] [UWNDR] Node " << (int) ipAddr_
@@ -312,6 +357,7 @@ UwNdrModule::sendRouteReply(uint8_t orig_src, uint8_t target_dst, uint8_t next_h
 	ndrh->send_time_ = NOW;
 
 	replies_sent_++;
+	total_ctrl_bytes_ += sizeof(hdr_uwndr);
 
 	if (verbose_) {
 		std::cout << "[" << NOW << "s] [UWNDR] Node " << (int) ipAddr_
@@ -386,6 +432,7 @@ UwNdrModule::handleProbe(Packet *p)
 		ch->prev_hop_ = ipAddr_;
 		ch->next_hop() = UWIP_BROADCAST;
 		probes_forwarded_++;
+		total_ctrl_bytes_ += sizeof(hdr_uwndr);
 
 		if (verbose_) {
 			std::cout << "[" << NOW << "s] [UWNDR] Node " << (int) ipAddr_
@@ -432,6 +479,7 @@ UwNdrModule::handleReply(Packet *p)
 		ch->prev_hop_ = ipAddr_;
 		ch->next_hop() = rev_entry.next_hop;
 		replies_forwarded_++;
+		total_ctrl_bytes_ += sizeof(hdr_uwndr);
 
 		if (verbose_) {
 			std::cout << "[" << NOW << "s] [UWNDR] Node " << (int) ipAddr_
@@ -518,6 +566,7 @@ UwNdrModule::sendRouteError(uint8_t orig_src, uint8_t broken_dst)
 	ndrh->send_time_ = NOW;
 
 	errors_sent_++;
+	total_ctrl_bytes_ += sizeof(hdr_uwndr);
 	sendDown(err);
 }
 
@@ -565,6 +614,7 @@ UwNdrModule::handleError(Packet *p)
 		ch->direction() = hdr_cmn::DOWN;
 		ch->prev_hop_ = ipAddr_;
 		ch->next_hop() = rev_entry.next_hop;
+		total_ctrl_bytes_ += sizeof(hdr_uwndr);
 		sendDown(p);
 	} else {
 		Packet::free(p);
@@ -587,6 +637,7 @@ UwNdrModule::flushPendingQueue(uint8_t dst, uint8_t next_hop)
 		ch->direction() = hdr_cmn::DOWN;
 		ch->prev_hop_ = ipAddr_;
 		ch->next_hop() = next_hop;
+		total_data_bytes_ += ch->size();
 		sendDown(pkt);
 		flushed++;
 	}
@@ -611,6 +662,51 @@ UwNdrModule::purgeExpiredRoutes()
 			}
 		}
 	}
+}
+
+void
+UwNdrModule::purgeStalePackets()
+{
+	for (auto &kv : pending_queues_) {
+		std::queue<Packet *> &q = kv.second;
+		size_t sz = q.size();
+		for (size_t i = 0; i < sz; i++) {
+			Packet *pkt = q.front();
+			q.pop();
+			hdr_cmn *ch = HDR_CMN(pkt);
+			if ((NOW - ch->timestamp()) > max_buffer_time_) {
+				if (verbose_) {
+					std::cout << "[" << NOW << "s] [UWNDR] Node " << (int) ipAddr_
+							  << " dropped STALE buffered packet (target dst=" << (int) kv.first
+							  << " age=" << (NOW - ch->timestamp()) << "s > max=" << max_buffer_time_ << "s)" << std::endl;
+				}
+				data_dropped_timeout_++;
+				drop(pkt, 1, DROP_UWNDR_TIMEOUT);
+			} else {
+				q.push(pkt);
+			}
+		}
+	}
+
+	// Purge stale deduplication entries older than 60s
+	for (auto &src_kv : seen_data_pkts_) {
+		for (auto it = src_kv.second.begin(); it != src_kv.second.end(); ) {
+			if ((NOW - it->second) > 60.0) {
+				it = src_kv.second.erase(it);
+			} else {
+				++it;
+			}
+		}
+	}
+}
+
+double
+UwNdrModule::getOverheadRatio() const
+{
+	if (total_data_bytes_ == 0) {
+		return 0.0;
+	}
+	return static_cast<double>(total_ctrl_bytes_) / static_cast<double>(total_data_bytes_);
 }
 
 void
