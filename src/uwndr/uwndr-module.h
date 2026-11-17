@@ -15,6 +15,7 @@
 
 #define DROP_UWNDR_BUF_FULL "UBF"
 #define DROP_UWNDR_NO_ROUTE "UNR"
+#define DROP_UWNDR_TIMEOUT  "UTO"
 #define DROP_UWNDR_DUP      "UDP"
 
 class UwNdrModule;
@@ -77,6 +78,7 @@ protected:
 	bool getValidRoute(uint8_t dst, UwNdrRoutingEntry &entry, bool refresh_lease = false);
 	void flushPendingQueue(uint8_t dst, uint8_t next_hop);
 	void purgeExpiredRoutes();
+	void purgeStalePackets();
 	void printRoutingTable() const;
 
 private:
@@ -85,6 +87,7 @@ private:
 	double probe_timeout_;
 	double route_lifetime_;
 	int max_buffer_pkts_;
+	double max_buffer_time_; /**< Maximum time (s) a packet can wait in pending_queues_ before eviction (DROP_UWNDR_TIMEOUT). */
 	int verbose_;
 	int refresh_on_tx_;   /**< If 0 (default), outbound transmissions do not prolong lease (prevents blackholes under setNoAckMode). */
 
@@ -98,6 +101,7 @@ private:
 	unsigned long errors_sent_;
 	unsigned long data_forwarded_;
 	unsigned long data_dropped_buf_;
+	unsigned long data_dropped_timeout_;
 	unsigned long data_dropped_dup_;
 	unsigned long routes_expired_;
 

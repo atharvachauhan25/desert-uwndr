@@ -35,6 +35,7 @@ void
 UwNdrExpireTimer::expire(Event *)
 {
 	module_->purgeExpiredRoutes();
+	module_->purgeStalePackets();
 	resched(5.0);
 }
 
@@ -44,6 +45,7 @@ UwNdrModule::UwNdrModule()
 	, probe_timeout_(15.0)
 	, route_lifetime_(60.0)
 	, max_buffer_pkts_(20)
+	, max_buffer_time_(30.0)
 	, verbose_(1)
 	, refresh_on_tx_(0)
 	, seq_num_(0)
@@ -54,6 +56,7 @@ UwNdrModule::UwNdrModule()
 	, errors_sent_(0)
 	, data_forwarded_(0)
 	, data_dropped_buf_(0)
+	, data_dropped_timeout_(0)
 	, data_dropped_dup_(0)
 	, routes_expired_(0)
 	, expire_timer_(this)
@@ -62,6 +65,7 @@ UwNdrModule::UwNdrModule()
 	bind("probe_timeout_", &probe_timeout_);
 	bind("route_lifetime_", &route_lifetime_);
 	bind("max_buffer_pkts_", &max_buffer_pkts_);
+	bind("max_buffer_time_", &max_buffer_time_);
 	bind("verbose_", &verbose_);
 	bind("refresh_on_tx_", &refresh_on_tx_);
 }
@@ -105,6 +109,12 @@ UwNdrModule::command(int argc, const char *const *argv)
 			return TCL_OK;
 		} else if (strcasecmp(argv[1], "getdataforwarded") == 0) {
 			tcl.resultf("%lu", data_forwarded_);
+			return TCL_OK;
+		} else if (strcasecmp(argv[1], "getdatadroppedbuf") == 0) {
+			tcl.resultf("%lu", data_dropped_buf_);
+			return TCL_OK;
+		} else if (strcasecmp(argv[1], "getdatadroppedtimeout") == 0) {
+			tcl.resultf("%lu", data_dropped_timeout_);
 			return TCL_OK;
 		} else if (strcasecmp(argv[1], "getdatadroppeddup") == 0) {
 			tcl.resultf("%lu", data_dropped_dup_);
@@ -608,6 +618,42 @@ UwNdrModule::purgeExpiredRoutes()
 			if (verbose_) {
 				std::cout << "[" << NOW << "s] [UWNDR] Node " << (int) ipAddr_
 						  << " route to Node " << (int) kv.first << " EXPIRED." << std::endl;
+			}
+		}
+	}
+}
+
+void
+UwNdrModule::purgeStalePackets()
+{
+	for (auto &kv : pending_queues_) {
+		std::queue<Packet *> &q = kv.second;
+		size_t sz = q.size();
+		for (size_t i = 0; i < sz; i++) {
+			Packet *pkt = q.front();
+			q.pop();
+		hdr_cmn *ch = HDR_CMN(pkt);
+			if ((NOW - ch->timestamp()) > max_buffer_time_) {
+				if (verbose_) {
+					std::cout << "[" << NOW << "s] [UWNDR] Node " << (int) ipAddr_
+							  << " dropped STALE buffered packet (target dst=" << (int) kv.first
+							  << " age=" << (NOW - ch->timestamp()) << "s > max=" << max_buffer_time_ << "s)" << std::endl;
+				}
+				data_dropped_timeout_++;
+				drop(pkt, 1, DROP_UWNDR_TIMEOUT);
+			} else {
+				q.push(pkt);
+			}
+		}
+	}
+
+	// Purge stale deduplication entries older than 60s
+	for (auto &src_kv : seen_data_pkts_) {
+		for (auto it = src_kv.second.begin(); it != src_kv.second.end(); ) {
+			if ((NOW - it->second) > 60.0) {
+				it = src_kv.second.erase(it);
+			} else {
+				++it;
 			}
 		}
 	}
