@@ -1,3 +1,4 @@
+// UW-NDR Protocol Implementation - Production Code Freeze v1.0
 #include "uwndr-module.h"
 #include <cstdlib>
 
