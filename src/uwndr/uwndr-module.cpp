@@ -93,6 +93,9 @@ UwNdrModule::command(int argc, const char *const *argv)
 
 	if (argc == 2) {
 		if (strcasecmp(argv[1], "initialize") == 0) {
+			if (seq_num_ == 0 && NOW > 0.0) {
+				seq_num_ = static_cast<uint32_t>(NOW);
+			}
 			expire_timer_.resched(5.0);
 			return TCL_OK;
 		} else if (strcasecmp(argv[1], "printroutes") == 0) {
@@ -197,6 +200,9 @@ UwNdrModule::recv(Packet *p)
 			// Passive reverse route refresh from incoming data traffic
 			if (ch->prev_hop_ != 0 && iph->saddr() != 0 && iph->saddr() != ipAddr_) {
 				uint8_t prev_hop = static_cast<uint8_t>(ch->prev_hop_);
+				// prev_hop is guaranteed to be a direct 1-hop physical neighbor
+				updateRoute(prev_hop, prev_hop, 1, 0);
+
 				UwNdrRoutingEntry existing;
 				if (getValidRoute(iph->saddr(), existing)) {
 					if (existing.next_hop == prev_hop) {
@@ -217,6 +223,9 @@ UwNdrModule::recv(Packet *p)
 		// Data packet meant for another node -> forward along dynamic route
 		if (ch->prev_hop_ != 0 && iph->saddr() != 0 && iph->saddr() != ipAddr_) {
 			uint8_t prev_hop = static_cast<uint8_t>(ch->prev_hop_);
+			// prev_hop is guaranteed to be a direct 1-hop physical neighbor
+			updateRoute(prev_hop, prev_hop, 1, 0);
+
 			UwNdrRoutingEntry rev_entry;
 			if (getValidRoute(iph->saddr(), rev_entry)) {
 				if (rev_entry.next_hop == prev_hop) {
@@ -338,7 +347,7 @@ UwNdrModule::sendRouteProbe(uint8_t target_dst)
 }
 
 void
-UwNdrModule::sendRouteReply(uint8_t orig_src, uint8_t target_dst, uint8_t next_hop, uint32_t seq_num)
+UwNdrModule::sendRouteReply(uint8_t orig_src, uint8_t target_dst, uint8_t next_hop, uint32_t /* seq_num */)
 {
 	Packet *reply = Packet::alloc();
 	hdr_cmn *ch = HDR_CMN(reply);
@@ -358,7 +367,9 @@ UwNdrModule::sendRouteReply(uint8_t orig_src, uint8_t target_dst, uint8_t next_h
 	ndrh->pkt_type_ = UWNDR_REPLY;
 	ndrh->orig_src_ = orig_src;
 	ndrh->target_dst_ = target_dst;
-	ndrh->seq_num_ = seq_num;
+	// Use destination's OWN monotonic sequence number so that route entries
+	// for target_dst are always evaluated against target_dst's sequence space
+	ndrh->seq_num_ = ++seq_num_;
 	ndrh->hop_count_ = 0;
 	ndrh->send_time_ = NOW;
 
