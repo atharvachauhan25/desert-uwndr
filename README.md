@@ -1,6 +1,6 @@
 # UW-NDR: On-Demand Neighbor Discovery & Dynamic Routing for DESERT Underwater
 
-Dynamic, peer-to-peer multi-hop routing protocol (**`Module/UW/NDR`**) for decentralized Autonomous Underwater Vehicle (AUV) swarms in **DESERT Underwater 3.5.0 / NS-Miracle 2.0.2**.
+Dynamic, peer-to-peer multi-hop routing protocol (**`Module/UW/NDR`**) for decentralized Autonomous Underwater Vehicle (AUV) swarms in **DESERT Underwater 3.5.0 / NS-Miracle 2.0.2** (verified via `CHANGELOG.md` and repository release tags from University of Padova SIGNET Lab).
 
 Designed to provide on-demand, any-to-any dynamic multi-hop routing in underwater acoustic networks without requiring manual static route provisioning (`Module/UW/StaticRouting`), without incurring the channel-saturating broadcast storms of continuous flooding (`Module/UW/FLOODING`), and without the sink-rooted topology constraints of tree-based protocols (`UW/SUN`, `UW/ICRP`).
 
@@ -25,8 +25,8 @@ In underwater acoustic networking, bandwidth is scarce (4800 bps nominal), propa
 - **Destination Sequence Numbers:** Every node assigns its own monotonic sequence number to outgoing `PROBE` (originator sequence) and `REPLY` (target sequence) control packets. Route updates for any destination are strictly evaluated within that destination's sequence space, eliminating cross-originator sequence number conflicts.
 - **Outbound Transmission Lease Decoupling (`refresh_on_tx_ = 0`):** In underwater networks running unacknowledged CSMA MAC protocols (`setNoAckMode`), outbound data transmissions cannot verify link delivery. If transmitting data reset the route timer, a dead or departed relay would permanently keep its route active, creating a silent blackhole. By decoupling lease renewals from outbound transmissions, route validity is strictly bounded by `route_lifetime_`.
 - **Acoustic Retransmission Jitter (`probe_jitter_`):** When intermediate nodes rebroadcast discovery probes, a randomized acoustic backoff window over the interval `[0, probe_jitter_]` desynchronizes relay transmissions, preventing broadcast packet collisions under unslotted CSMA/ALOHA.
-- **Physical Neighbor Disambiguation in Passive Learning:** Overhearing packets passively refreshes route leases only when the frame originates from a confirmed direct physical neighbor (`prev_hop == saddr`). Multi-hop forwarded packets never falsely overwrite hop counts, but direct 1-hop physical neighbors are kept warm to accelerate two-way communication.
-- **Bounded Discovery & Deduplication History:** Probe histories (`seen_probes_`) and MAC-retry duplicate tables (`seen_data_pkts_`) are periodically pruned by an active expiration timer, bounding memory footprint and allowing rebooted nodes to re-discover topology without sequence-number lockout.
+- **Physical Neighbor Disambiguation in Passive Learning:** When overhearing incoming data traffic, `UW/NDR` immediately records and refreshes a 1-hop physical route to the direct frame transmitter (`prev_hop`), keeping direct physical neighbors warm. For the multi-hop originator (`saddr`), if an existing valid route already routes through `prev_hop`, its route timer is refreshed; if no route exists, a 1-hop route is installed *only* if `prev_hop == saddr`. Overheard multi-hop forwarded packets (`prev_hop != saddr`) are never installed as 1-hop routes to `saddr`, preventing loop formation and hop count corruption.
+- **Bounded Discovery & Deduplication History:** Discovery probe histories (`seen_probes_`) and MAC-retry duplicate caches (`seen_data_pkts_`) are periodically pruned by an active expiration timer (at `2 × route_lifetime_`), preventing memory leaks during long-running deployments. To mitigate sequence-number lockout after a vehicle reboot, `initialize` seeds `seq_num_` from current simulation time `NOW` (if $t > 0$) rather than zero. *Note: node reboot sequence recovery is an architectural mechanism and remains untested in simulation, as the current evaluation suite does not reboot nodes mid-run.*
 - **Outbound Packet Buffering with Age Eviction:** Outgoing CBR/UDP data packets wait in destination queues (`pending_queues_`) while route discovery is in flight and flush in order upon `REPLY`. Packets buffered longer than `max_buffer_time_` (30 s) are dropped (`DROP_UWNDR_TIMEOUT`) to prevent buffer bloat during network partitioning.
 - **DESERT `PacketHeader/LL` Memory Offset Fix:** Explicitly enables `PacketHeaderManager set tab_(PacketHeader/LL) 1` in `uwndr-default.tcl`, preventing `UWMllModule::sendDown` from corrupting byte offset 0 in NS-2 packet headers.
 
@@ -64,7 +64,14 @@ From `results/overhead_scaling.csv` (180 s route lease, `refresh_on_tx_ = 0`):
 | `flooding` | 1800 s | 86 / 89 | 96.63% | 3.7836 | 48.11 | 267 | 356 | 0 |
 | **`uwndr`** | 1800 s | 88 / 89 | **98.88%** | 4.5823 | 49.01 | 176 | 332 | **67** |
 
-*Analysis of Control Packet Scaling:* Under unacknowledged CSMA MAC, route leases are bounded by `route_lifetime_` (180 s in benchmark). As a result, control packets scale predictably with duration: an initial discovery cycle (14 packets) followed by periodic re-discovery upon lease expiration (~7 control packets per renewal cycle: 21 pkts at 600 s, 42 pkts at 1200 s, 67 pkts at 1800 s), while maintaining 98.9% to 100% PDR.
+*Analysis of Control Packet Scaling & Layer-3 Efficiency:*
+Under unacknowledged CSMA MAC (`setNoAckMode`), outbound transmissions cannot verify link integrity (`refresh_on_tx_ = 0`). Route validity is strictly bounded by `route_lifetime_` (180 s in benchmark). Consequently, control packets scale predictably with simulation duration: an initial discovery cycle (14 packets) followed by periodic re-discovery upon lease expiration (~7 control packets per renewal cycle: 21 pkts at 600 s, 42 pkts at 1200 s, 67 pkts at 1800 s), maintaining 98.9% to 100% PDR.
+
+*Relay Reduction vs. Channel Access Trade-Off:*
+Because healthy flows re-flood discovery probes every 180 s upon lease expiration, the MAC channel-access savings over flooding in this static 5-node setup are moderate (7.1% at 600 s, 6.7% at 1800 s: 332 vs 356 MAC transmissions). However, the primary efficiency advantage of `UW/NDR` lies at Layer 3 and in physical acoustic energy:
+- **34.1% Reduction in Layer-3 Data Relays:** At 1800 s, `UW/NDR` required only 176 intermediate forwarding operations compared to 267 for flooding, eliminating redundant acoustic packet forwarding across off-path nodes (such as Node 4).
+- **22.1% Reduction in Transmit Energy ($E_{tx}$):** At 600 s, total acoustic transmit energy was 64.59 ± 0.32 J for `UW/NDR` vs 82.94 ± 0.00 J for flooding.
+- **22.9% Lower Energy per Received Bit:** 3.774 mJ/bit vs 4.896 mJ/bit, demonstrating clear acoustic energy conservation despite periodic lease re-probing.
 
 #### B. 10-Seed Monte Carlo Static Performance (600 s Duration, 95% Confidence Intervals)
 From `results/mobility_summary.csv` at 0.0 m/s:
@@ -86,13 +93,12 @@ Simulated using a 3D Gauss-Markov mobility model across speeds 0.0 m/s to 2.0 m/
 ```
   Packet Delivery Ratio vs Speed (10 Seeds, 95% CI)
   100% +-------------------------------------------------------+
-       |   O           O           O                           |   O = Static Oracle
-   95% |   #===========#===========#===========#===========#   |   # = Flooding
-       |   *           *                                       |   * = UW-NDR (Ours)
-   90% |                                                       |
-       |                               *           *           |
-   85% |                           *                           |
-       |                                                       |
+       |  *O           O                                       |   O = Static Oracle
+   95% |   #===========#===========#===========#===========#   |   # = Flooding (~93–96%)
+       |               *                   O                   |   * = UW-NDR (Ours)
+   90% |                                               O       |
+   85% |                                       *               |
+   80% |                           *                           |
    70% |                                               *       |
        +-------------------------------------------------------+
           0.0 m/s     0.5 m/s     1.0 m/s     1.5 m/s     2.0 m/s
@@ -109,8 +115,9 @@ Detailed metrics:
 | **2.0 m/s** | 87.24 ± 13.26% | 93.10 ± 4.65% | 68.28 ± 17.32% | 96.7 ± 8.02 | 115.7 ± 0.68 | 33.94 ± 26.47% |
 
 #### Scientific Findings:
-- **The 1.0 m/s Operational Crossover:** At typical AUV survey velocities ($\le 0.5$ m/s to 1.0 m/s / ~1–2 knots), `UW/NDR` delivers **94.5% to 99.7% PDR**, maintaining parity with static routing while saving channel access attempts over flooding.
-- **High-Velocity Breakdown:** Beyond 1.0 m/s, vehicle displacement alters acoustic topology faster than reactive route discovery and lease expiration. Under fast vehicle motion (2.0 m/s), `UW/NDR` PDR declines to 68.3%, whereas `UW/FLOODING` retains 93.1% PDR through all-path redundancy.
+- **Operational Regime ($\le 0.5$ m/s):** At survey velocities up to 0.5 m/s (~1 knot), `UW/NDR` delivers **94.5% to 99.7% PDR** (99.66 ± 0.78% at 0.0 m/s, 94.48 ± 5.72% at 0.5 m/s), matching static routing and outperforming flooding at zero mobility while conserving transmit energy.
+- **The 0.5–1.0 m/s Velocity Crossover:** The operational crossover occurs between 0.5 m/s and 1.0 m/s. At 1.0 m/s (~2 knots), `UW/NDR` delivers **82.41 ± 12.76% PDR** against flooding's 96.21 ± 3.17%. Control byte overhead increases to 21.85 ± 7.73% as vehicle motion causes occasional route invalidation prior to normal lease expiry.
+- **High-Velocity Breakdown (>1.0 m/s):** Beyond 1.0 m/s, vehicle displacement alters acoustic topology faster than reactive route discovery and lease expiration can adapt. At 2.0 m/s (~4 knots), `UW/NDR` PDR declines to 68.28 ± 17.32% with 33.94% control bytes. In this high-mobility regime, `UW/FLOODING` achieves superior delivery (93.10 ± 4.65%) through all-path broadcast diversity, trading higher channel congestion for packet survivability.
 
 ---
 
@@ -157,8 +164,10 @@ Evaluated across swarm sizes $N \in \{4, 6, 8, 10\}$ with concurrent flows under
 | **10** | 40 s | 94.53 ± 2.41% | 59.29 ± 4.50% | 167.2 ± 14.29 | 350.9 ± 5.93 | 63.32 ± 10.76% |
 
 #### Swarm Scaling Takeaway:
-- In smaller swarms ($N=4$), `UW/NDR` performs reliably (77% to 79% PDR) with very low control overhead (2.4% to 6.7%).
-- In larger swarms ($N \in [8, 10]$) under simultaneous 1.0 m/s vehicle mobility, flooding achieves higher delivery (89% to 97%) due to multipath broadcast diversity, but does so at the cost of **2.5× to 3.3× more channel transmissions** (e.g., 1489 vs 446 MAC packets at $N=10$). `UW/NDR` caps transmission count at the expense of lower PDR (58% to 65%) due to probe collisions in unslotted CSMA and vehicle motion across multi-hop paths.
+- **Small Swarms ($N=4$):** In a compact 4-node network, `UW/FLOODING` actually requires slightly fewer MAC transmissions than `UW/NDR` (flooding generates **0.84× to 0.95×** of `UW/NDR` channel access, e.g., 74.9 vs 89.5 MAC TX at 40 s period), as localized flooding trees avoid the multi-hop probe broadcast overhead.
+- **Medium & Large Swarms ($N \ge 6$):** `UW/NDR` becomes cheaper in channel access starting at $N \ge 6$. Across all $N \in \{8, 10\}$ configurations under simultaneous 1.0 m/s vehicle motion, flooding generates **1.9× to 3.3× more channel transmissions** than `UW/NDR` (specifically 2.5× to 3.3× at 10 s CBR period, e.g., 1489.5 vs 446.0 MAC packets at $N=10$).
+- **Delivery vs. Channel Overhead Trade-Off:** While `UW/FLOODING` maintains higher delivery (89% to 97%) via multipath broadcast redundancy, `UW/NDR` achieves 58% to 65% PDR. This lower PDR is hypothesized to stem from vehicle motion across dynamic multi-hop paths combined with unslotted CSMA probe collisions (a hypothesis that could be tested by sweeping `probe_jitter_` across 0.0 s, 0.1 s, and 1.0 s).
+- **Control Overhead at Low Traffic Rates:** At sparse CBR traffic rates (40 s period), control packets represent a large proportion of network traffic, reaching **42.66 ± 10.54% at $N=8$** and **63.32 ± 10.76% at $N=10$** due to periodic 180 s lease renewals and mobility repair cycles across larger node counts.
 
 ---
 
@@ -199,6 +208,9 @@ Evaluated across Wenz wind-driven ambient noise levels in 1 dB steps (+0 dB to +
 1. **Security & Authentication:** The protocol header currently does not include cryptographic signatures, message authentication codes (MACs), or nonces. It assumes a closed, cooperative AUV swarm. In an adversarial setting, forged `UWNDR_ERROR` or `UWNDR_REPLY` frames could capture or disrupt active routes.
 2. **First-Arrival Path Selection:** Routes are established by the first arriving `PROBE`. In multi-path acoustic channels, the earliest arrival may not always possess the highest SNR or longest channel coherence time.
 3. **Simulation-Level Deduplication:** Frame deduplication currently inspects NS-2 packet UID (`ch->uid()`). Deployment on physical acoustic modems (e.g., Evologics, WHOI Micro-Modem) requires a dedicated packet sequence identifier within the Layer-3 protocol header.
+4. **Periodic Lease Re-Probing Overhead:** Because `refresh_on_tx_ = 0` decouples lease renewal from unacknowledged outbound transmissions to prevent silent blackholes, active flows must re-initiate probe discovery upon lease expiration (every 180 s). Future optimizations could introduce lightweight end-to-end destination keepalives or intermediate-node cached replies to eliminate periodic re-floods.
+5. **Discovery Scoping:** Discovery currently disseminates probes across the entire bounded hop horizon (`max_hop_count_`) without expanding-ring search or backoff escalation on consecutive discovery failures.
+6. **Reboot Recovery in Simulation:** While sequence seeding from `NOW` in `command("initialize")` and probe cache purging are implemented to mitigate sequence-number lockout after node reboots, mid-mission vehicle reboots are not simulated in the current benchmark suite.
 
 ---
 
