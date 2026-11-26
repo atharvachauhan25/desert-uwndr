@@ -1,4 +1,4 @@
-// UW-NDR Protocol Implementation - Production Code Freeze v1.0
+// UW-NDR Protocol Implementation for DESERT Underwater
 #include "uwndr-module.h"
 #include <rng.h>
 #include <cstdlib>
