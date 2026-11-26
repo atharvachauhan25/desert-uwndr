@@ -24,7 +24,7 @@ In underwater acoustic networking, bandwidth is scarce (4800 bps nominal), propa
 - **On-Demand Path Discovery (`UWNDR_PROBE` / `UWNDR_REPLY`):** When an application generates a packet toward an unrouted destination, the originator broadcasts a hop-limited probe (`max_hop_count_`). Relays record reverse paths to the source. The target answers with a unicast `REPLY` containing the target's own sequence number, establishing forward routing state across intermediate hops.
 - **Destination Sequence Numbers:** Every node assigns its own monotonic sequence number to outgoing `PROBE` (originator sequence) and `REPLY` (target sequence) control packets. Route updates for any destination are strictly evaluated within that destination's sequence space, eliminating cross-originator sequence number conflicts.
 - **Outbound Transmission Lease Decoupling (`refresh_on_tx_ = 0`):** In underwater networks running unacknowledged CSMA MAC protocols (`setNoAckMode`), outbound data transmissions cannot verify link delivery. If transmitting data reset the route timer, a dead or departed relay would permanently keep its route active, creating a silent blackhole. By decoupling lease renewals from outbound transmissions, route validity is strictly bounded by `route_lifetime_`.
-- **Acoustic Retransmission Jitter (`probe_jitter_`):** When intermediate nodes rebroadcast discovery probes, a randomized acoustic backoff window ($\mathcal{U}[0, \text{probe\_jitter\_}]$) desynchronizes relay transmissions, preventing broadcast packet collisions under unslotted CSMA/ALOHA.
+- **Acoustic Retransmission Jitter (`probe_jitter_`):** When intermediate nodes rebroadcast discovery probes, a randomized acoustic backoff window over the interval `[0, probe_jitter_]` desynchronizes relay transmissions, preventing broadcast packet collisions under unslotted CSMA/ALOHA.
 - **Physical Neighbor Disambiguation in Passive Learning:** Overhearing packets passively refreshes route leases only when the frame originates from a confirmed direct physical neighbor (`prev_hop == saddr`). Multi-hop forwarded packets never falsely overwrite hop counts, but direct 1-hop physical neighbors are kept warm to accelerate two-way communication.
 - **Bounded Discovery & Deduplication History:** Probe histories (`seen_probes_`) and MAC-retry duplicate tables (`seen_data_pkts_`) are periodically pruned by an active expiration timer, bounding memory footprint and allowing rebooted nodes to re-discover topology without sequence-number lockout.
 - **Outbound Packet Buffering with Age Eviction:** Outgoing CBR/UDP data packets wait in destination queues (`pending_queues_`) while route discovery is in flight and flush in order upon `REPLY`. Packets buffered longer than `max_buffer_time_` (30 s) are dropped (`DROP_UWNDR_TIMEOUT`) to prevent buffer bloat during network partitioning.
@@ -73,7 +73,7 @@ From `results/mobility_summary.csv` at 0.0 m/s:
 |---|---|---|---|---|
 | **Packet Delivery Ratio (PDR)** | 100.00 ± 0.00% | 94.83 ± 3.13% | **99.66 ± 0.78%** | +4.83% PDR over flooding (non-overlapping 95% CIs) |
 | **Total MAC Transmissions** | 87.0 ± 0.0 | 116.0 ± 0.0 | **107.8 ± 0.45** | -7.1% MAC channel access vs flooding |
-| **Transmit Energy ($E_{\text{tx}}$)** | 61.73 ± 0.00 J | 82.94 ± 0.00 J | **64.59 ± 0.32 J** | -22.1% TX energy vs flooding |
+| **Transmit Energy ($E_{tx}$)** | 61.73 ± 0.00 J | 82.94 ± 0.00 J | **64.59 ± 0.32 J** | -22.1% TX energy vs flooding |
 | **Energy per Received Bit** | 3.595 mJ/bit | 4.896 ± 0.174 mJ/bit | **3.774 ± 0.010 mJ/bit** | -22.9% energy per bit vs flooding |
 | **Mean End-to-End Latency** | 3.693 ± 0.038 s | 3.795 ± 0.032 s | 4.371 ± 0.067 s | +0.58 s due to initial on-demand discovery |
 
@@ -158,7 +158,7 @@ Evaluated across swarm sizes $N \in \{4, 6, 8, 10\}$ with concurrent flows under
 
 #### Swarm Scaling Takeaway:
 - In smaller swarms ($N=4$), `UW/NDR` performs reliably (77% to 79% PDR) with very low control overhead (2.4% to 6.7%).
-- In larger swarms ($N=8\text{--}10$) under simultaneous 1.0 m/s vehicle mobility, flooding achieves higher delivery (89% to 97%) due to multipath broadcast diversity, but does so at the cost of **2.5× to 3.3× more channel transmissions** (e.g., 1489 vs 446 MAC packets at $N=10$). `UW/NDR` caps transmission count at the expense of lower PDR (58% to 65%) due to probe collisions in unslotted CSMA and vehicle motion across multi-hop paths.
+- In larger swarms ($N \in [8, 10]$) under simultaneous 1.0 m/s vehicle mobility, flooding achieves higher delivery (89% to 97%) due to multipath broadcast diversity, but does so at the cost of **2.5× to 3.3× more channel transmissions** (e.g., 1489 vs 446 MAC packets at $N=10$). `UW/NDR` caps transmission count at the expense of lower PDR (58% to 65%) due to probe collisions in unslotted CSMA and vehicle motion across multi-hop paths.
 
 ---
 
@@ -210,7 +210,7 @@ Default parameters are declared in `src/uwndr/uwndr-default.tcl`:
 |---|---|---|---|---|
 | `max_hop_count_` | integer | `4` | `4` – `5` | Maximum acoustic relay hops allowed for PROBE dissemination |
 | `probe_timeout_` | double | `15.0 s` | `15.0 s` | Minimum interval before re-probing the same unrouted destination |
-| `probe_jitter_` | double | `0.1 s` | `0.1 s` | Randomized acoustic backoff window ($\mathcal{U}[0, \text{jitter}]$) for probe relaying |
+| `probe_jitter_` | double | `0.1 s` | `0.1 s` | Randomized acoustic backoff window over `[0, probe_jitter_]` for probe relaying |
 | `route_lifetime_` | double | `60.0 s` | `180.0 s` | Routing table entry expiration lease time |
 | `refresh_on_tx_` | integer | `0` | `0` | Outbound lease decoupling (0 = disabled to prevent silent blackholes) |
 | `max_buffer_pkts_`| integer | `20` | `20` – `30` | Maximum pending data packets held per destination |
