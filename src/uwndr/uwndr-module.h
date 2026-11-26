@@ -89,6 +89,7 @@ private:
 	uint8_t ipAddr_;
 	int max_hop_count_;
 	double probe_timeout_;
+	double probe_jitter_; /**< Maximum random acoustic backoff (s) when relaying PROBEs to prevent broadcast storms. */
 	double route_lifetime_;
 	int max_buffer_pkts_;
 	double max_buffer_time_; /**< Maximum time (s) a packet can wait in pending_queues_ before eviction (DROP_UWNDR_TIMEOUT). */

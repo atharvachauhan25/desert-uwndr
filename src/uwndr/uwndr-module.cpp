@@ -1,5 +1,6 @@
 // UW-NDR Protocol Implementation - Production Code Freeze v1.0
 #include "uwndr-module.h"
+#include <rng.h>
 #include <cstdlib>
 
 extern packet_t PT_UWNDR;
@@ -44,6 +45,7 @@ UwNdrModule::UwNdrModule()
 	: ipAddr_(0)
 	, max_hop_count_(4)
 	, probe_timeout_(15.0)
+	, probe_jitter_(0.1)
 	, route_lifetime_(60.0)
 	, max_buffer_pkts_(20)
 	, max_buffer_time_(30.0)
@@ -66,6 +68,7 @@ UwNdrModule::UwNdrModule()
 {
 	bind("max_hop_count_", &max_hop_count_);
 	bind("probe_timeout_", &probe_timeout_);
+	bind("probe_jitter_", &probe_jitter_);
 	bind("route_lifetime_", &route_lifetime_);
 	bind("max_buffer_pkts_", &max_buffer_pkts_);
 	bind("max_buffer_time_", &max_buffer_time_);
@@ -201,7 +204,8 @@ UwNdrModule::recv(Packet *p)
 						routing_table_[iph->saddr()].last_updated = NOW;
 						routing_table_[iph->saddr()].expire_time = NOW + route_lifetime_;
 					}
-				} else {
+				} else if (prev_hop == static_cast<uint8_t>(iph->saddr())) {
+					// Only install a direct 1-hop route if received directly from originator
 					updateRoute(iph->saddr(), prev_hop, 1, 0);
 				}
 			}
@@ -219,7 +223,8 @@ UwNdrModule::recv(Packet *p)
 					routing_table_[iph->saddr()].last_updated = NOW;
 					routing_table_[iph->saddr()].expire_time = NOW + route_lifetime_;
 				}
-			} else {
+			} else if (prev_hop == static_cast<uint8_t>(iph->saddr())) {
+				// Only install a direct 1-hop route if received directly from originator
 				updateRoute(iph->saddr(), prev_hop, 1, 0);
 			}
 		}
@@ -441,7 +446,12 @@ UwNdrModule::handleProbe(Packet *p)
 					  << " via Node " << (int) prev_hop
 					  << "; relaying PROBE for Node " << (int) target_dst << std::endl;
 		}
-		sendDown(p);
+		if (probe_jitter_ > 0.0) {
+			double jitter = RNG::defaultrng()->uniform_double() * probe_jitter_;
+			sendDown(p, jitter);
+		} else {
+			sendDown(p);
+		}
 	} else {
 		Packet::free(p);
 	}
@@ -498,12 +508,25 @@ void
 UwNdrModule::updateRoute(uint8_t dst, uint8_t next_hop, uint16_t hops, uint32_t seq)
 {
 	auto it = routing_table_.find(dst);
-	if (it == routing_table_.end() || !it->second.is_valid ||
-			seq > it->second.seq_num || hops < it->second.hop_count) {
+	bool should_update = false;
+
+	if (it == routing_table_.end() || !it->second.is_valid) {
+		should_update = true;
+	} else if (seq > 0 && it->second.seq_num > 0) {
+		if (seq > it->second.seq_num) {
+			should_update = true;
+		} else if (seq == it->second.seq_num && hops < it->second.hop_count) {
+			should_update = true;
+		}
+	} else if (hops < it->second.hop_count) {
+		should_update = true;
+	}
+
+	if (should_update) {
 		UwNdrRoutingEntry entry;
 		entry.next_hop = next_hop;
 		entry.hop_count = hops;
-		entry.seq_num = seq;
+		entry.seq_num = (seq > 0) ? seq : (it != routing_table_.end() ? it->second.seq_num : 0);
 		entry.last_updated = NOW;
 		entry.expire_time = NOW + route_lifetime_;
 		entry.is_valid = true;
@@ -693,6 +716,18 @@ UwNdrModule::purgeStalePackets()
 	for (auto &src_kv : seen_data_pkts_) {
 		for (auto it = src_kv.second.begin(); it != src_kv.second.end(); ) {
 			if ((NOW - it->second) > 60.0) {
+				it = src_kv.second.erase(it);
+			} else {
+				++it;
+			}
+		}
+	}
+
+	// Purge stale seen_probes_ entries older than 2 * route_lifetime_
+	// Bounds memory usage and allows rebooted nodes to re-discover routes after sequence reset
+	for (auto &src_kv : seen_probes_) {
+		for (auto it = src_kv.second.begin(); it != src_kv.second.end(); ) {
+			if ((NOW - it->second) > (route_lifetime_ * 2.0)) {
 				it = src_kv.second.erase(it);
 			} else {
 				++it;
