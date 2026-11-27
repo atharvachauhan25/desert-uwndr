@@ -30,12 +30,11 @@ FIG = RES / "figures"
 
 INK, INK2, GRID, SURF = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 STYLE = {  # fixed entity -> colour / marker / label
-    "uwndr":            dict(color="#2a78d6", marker="o", ls="-",  label="UW-NDR (main)"),
-    "uwndr_a11preview": dict(color="#eda100", marker="D", ls="--", label="UW-NDR + trial fix"),
+    "uwndr":            dict(color="#2a78d6", marker="o", ls="-",  label="UW-NDR (Ours)"),
     "flooding":         dict(color="#eb6834", marker="s", ls="-",  label="UW/FLOODING"),
     "static":           dict(color="#1baf7a", marker="^", ls="-",  label="StaticRouting (t=0 routes)"),
 }
-ORDER = ["uwndr", "uwndr_a11preview", "flooding", "static"]
+ORDER = ["uwndr", "flooding", "static"]
 
 plt.rcParams.update({
     "figure.facecolor": SURF, "axes.facecolor": SURF, "savefig.facecolor": SURF,
@@ -96,12 +95,7 @@ def save(fig, name: str, tight: bool = True):
 
 
 def merged(name: str) -> list[dict]:
-    rows = load(name)
-    for r in load(f"{name}_a11preview"):
-        r = dict(r)
-        r["mode"] = "uwndr_a11preview"
-        rows.append(r)
-    return rows
+    return load(name)
 
 
 def fig_mobility(err):

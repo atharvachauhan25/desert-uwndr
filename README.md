@@ -6,6 +6,22 @@ Designed to provide on-demand, any-to-any dynamic multi-hop routing in underwate
 
 ---
 
+## Authors & Project Contributions
+
+This project is designed, developed, and evaluated as a collaborative research project by:
+
+- **Atharva Chauhan** (`2024A8PS0725G`) — Protocol Core Architecture & C++ Engine
+  - Designed and developed the core `Module/UW/NDR` reactive routing protocol finite-state machine in C++ for NS-Miracle / DESERT Underwater.
+  - Implemented on-demand hop-limited route discovery (`UWNDR_PROBE` / `UWNDR_REPLY`), outbound data queue buffering with age-based stale packet eviction, and destination-centric sequence numbering to eliminate route cache poisoning.
+  - Engineered critical low-level framework adaptations, including the DESERT `PacketHeader/LL` memory offset fix, unacknowledged CSMA transmission lease decoupling (`refresh_on_tx_ = 0`), and randomized acoustic backoff retransmission jitter.
+
+- **Prabhas Narnur** (`2023B5A31003G`) — Simulation Benchmarking & Evaluation Pipeline
+  - Architected and automated the multi-scenario DESERT simulation test harness and 10-seed Monte Carlo evaluation suite (linear baseline, failover dynamics, Gauss-Markov mobility, swarm density scaling, and ambient acoustic noise sweeps).
+  - Developed the ROS DSOR / Farol cooperative AUV waypoint converter and trajectory replay simulator.
+  - Built the statistical post-processing data analysis pipeline, energy-per-bit / goodput metric calculators, and publication-ready visualization generation scripts.
+
+---
+
 ## Architectural Context & Design Trade-Offs
 
 In underwater acoustic networking, bandwidth is scarce (4800 bps nominal), propagation delay is high (~1500 m/s acoustic velocity), and energy consumption during transmission is substantial.
